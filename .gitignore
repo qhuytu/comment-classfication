@@ -127,3 +127,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Data files
+input/
+model/
+splitted/
+
+# Test libs
+VnCoreNLP/
