@@ -3,6 +3,8 @@ from pyspark.sql.functions import col, udf, regexp_replace, trim
 from pyspark.sql.types import ArrayType, StringType
 from pyspark.sql import DataFrame
 from pyvi import ViTokenizer, ViPosTagger
+import torch
+import torch.nn as nn
 
 hashtag_regex = r"#(\w{1,})"
 url_regex = r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»“”‘’]))"

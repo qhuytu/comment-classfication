@@ -130,7 +130,9 @@ dmypy.json
 
 # Data files
 input/
-model/
+!input/check.csv
+model_lr/
+model_rnn/
 splitted/
 
 # Test libs
