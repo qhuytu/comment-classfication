@@ -80,13 +80,108 @@ df
 
 \subsection{Huẩn luyện mô hình bằng Logistic Regression trong Spark}
 
+\begin{figure}
+\includegraphics[width=\textwidth]{pyspark_cycle.png}
+\caption{Quá trình xây dựng mô hình \label{figPysparkCycle}}
+\end{figure}
+
 \subsubsection{Chuẩn bị dữ liệu}
+
+Trước khi bắt đầu xử lý thì cần chia nhỏ dữ liệu ra thành các file nhỏ. Các file sẽ được phân loại theo trường \textit{status} và được chia thành 20 file nhỏ.
+
+\begin{lstlisting}
+# Read raw data
+rawData = spark.read.csv('./input/train.csv', inferSchema=True, header=True)
+rawValidData = spark.read.csv('./input/validation.csv', inferSchema=True, header=True)
+rawTestData = spark.read.csv('./input/test.csv', inferSchema=True, header=True)
+
+# Split raw data
+rawData.repartition(20).write.partitionBy("status").csv('./splitted/train', mode="overwrite")
+rawValidData.repartition(20).write.partitionBy("status").csv('./splitted/valid', mode="overwrite")
+rawTestData.repartition(20).write.partitionBy("status").csv('./splitted/test', mode="overwrite")
+\end{lstlisting}
+
+Do đây là dữ liệu tiếng Việt cho nên cần một bộ từ dừng cho tiếng Việt. Trong bài báo cáo này thì một bộ từ dừng gồm 1944 từ và cụm từ tiếng Việt và các dấu cách sẽ được thay bằng dấu gạch dưới (\_)
+
+\begin{lstlisting}
+a_ha
+ai
+ai_ai
+amen
+anh
+ba
+ba_ba
+\end{lstlisting}
 
 \subsubsection{Xây dựng mô hình}
 
+\paragraph{Chuỗi hóa} sử dụng gói PyVi để tách các câu tiếng Việt thành các từ và cụm từ.
+
+\begin{lstlisting}
+tokenize_text_udf = udf(lambda s: ViPosTagger.postagging(ViTokenizer.tokenize(s))[0], ArrayType(StringType()))
+def lower_arr_str(x):
+    res = []
+    for x_ in x: res.append(x_.lower())
+    return res
+to_lower_str_arr = udf(lower_arr_str, ArrayType(StringType()))
+def tokenizeDf(df : DataFrame) -> DataFrame:
+    return df.withColumn("content1", to_lower_str_arr(tokenize_text_udf(col("content"))))
+\end{lstlisting}
+
+\paragraph{Loại bỏ từ dừng} từ dừng là các từ được sử dụng để hoàn chỉnh câu, tuy nhiên không đóng góp vào ý nghĩa cuối cùng của câu. Do đó hoàn toàn có thể bỏ qua sự tồn tại của các từ dừng trong câu. Từ dừng sẽ được dùng trong bộ từ dừng tiếng Việt được đề cập ở phần trước.
+
+\begin{lstlisting}
+stopwords_file = open("./vietnamese-stopwords.txt", "r")
+stopwords_list = stopwords_file.read().split('\n')
+stopwords_remover = StopWordsRemover(
+    inputCol="content1",
+    outputCol="content2",
+    stopWords=stopwords_list,
+)
+\end{lstlisting}
+
+\paragraph{Băm TF và tính IDF} TF-IDF là một cách để biểu diễn dữ liệu chuỗi dưới dạng ma trận bằng cách sử dụng các số mà các số đó có thể biểu diễn được giá trị của các từ trong câu.
+
+\begin{lstlisting}
+hashing_tf = HashingTF(
+    inputCol="content2",
+    outputCol="term_frequency",
+)
+idf = IDF(
+    inputCol="term_frequency",
+    outputCol="features",
+    minDocFreq=5
+)
+\end{lstlisting}
+
 \subsubsection{Huấn luyện mô hình}
 
+Đưa các bước chuẩn bị dữ liệu ở trên thành Spark Pipeline. Spark Pipeline này sẽ nhận tập training và cho ra được mô hình nhận diện bình luận.
+
+\begin{lstlisting}
+lr = LogisticRegression(labelCol="status")
+sematic_analysis_pipeline = Pipeline(
+    stages=[stopwords_remover, hashing_tf, idf, lr]
+)
+model = sematic_analysis_pipeline.fit(trainingData)
+\end{lstlisting}
+
+Sau khi có được mô hình, ta có thể đánh giá độ chính xác của mô hình dựa trên tập dữ liệu validation và test. Để đánh giá độ chính xác của mô hình thì có thể sử dụng lớp MulticlassClassificationEvaluator của PySpark. 
+
+\begin{lstlisting}
+val_df = model.transform(validationData)
+test_df = model.transform(testData)
+evaluator = MulticlassClassificationEvaluator(labelCol="status", metricName="accuracy")
+accuracy_val = evaluator.evaluate(val_df)
+accuracy_test = evaluator.evaluate(test_df)
+\end{lstlisting}
+
 \subsection{Huấn luyện mô hình bằng Recurrent Neural Network trong PyTorch}
+
+\begin{figure}
+\includegraphics[width=\textwidth]{pytorch_cycle.png}
+\caption{Quá trình xây dựng mô hình \label{figPytorchCycle}}
+\end{figure}
 
 \subsubsection{Chuẩn bị dữ liệu}
 
@@ -177,6 +272,24 @@ Tầng RNN sẽ nhận dense vector và trạng thái ẩn \textit{$h_{t-1}$} đ
 
 Đầu tiên phải tạo một optimizer. Optimizer được dùng để cập nhật các tham số cho mô hình. Thuật toán stochastic gradient descent (SGD) sẽ được sử dụng.
 Tiếp theo phải định nghĩa loss function, hay được gọi là criterion trong PyTorch.
+
+\begin{lstlisting}
+N_EPOCHS = 5
+best_valid_loss = float('inf')
+for epoch in range(N_EPOCHS):
+    start_time = time.time()    
+    train_loss, train_acc = train(model, train_iterator, optimizer, criterion)
+    valid_loss, valid_acc = evaluate(model, valid_iterator, criterion)    
+    end_time = time.time()
+    epoch_mins, epoch_secs = epoch_time(start_time, end_time)    
+    if valid_loss < best_valid_loss:
+        best_valid_loss = valid_loss
+        torch.save(model.state_dict(), './model_rnn/model.pt')    
+    print(f'Epoch: {epoch+1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s')
+    print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc*100:.2f}%')
+    print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc*100:.2f}%')
+\end{lstlisting}
+
 Cần phải huấn luyện mô hình qua nhiều lần lặp. Mỗi lần lặp thì mô hình sẽ tính lại và chọn ra mô hình cho độ mất mát trên tập validate tốt nhất.
 
 \section{Kết quả}
@@ -200,5 +313,18 @@ Test accuracy: 85.91%
 \end{lstlisting}
 
 \section{Kết luận}
+
+\begin{figure}
+\includegraphics[width=\textwidth]{compare.png}
+\caption{So sánh độ chính xác giữa hai mô hình \label{figCompare}}
+\end{figure}
+
+Cả hai mô hình đều cho đô chính xác cao (87\%) đổi với tập dữ liệu validation, mô hình RNN có độ chính xác cao hơn 0.3\%. Riêng đối với tập test thì mô hình LR cho độ chính xác cao hơn 1.2\% so với RNN.
+
+Thời gian huấn luyện mô hình LR tốn khoảng 15 phút, trong khi đó việc huấn luyện mô hình RNN phải tốn 5 lần lặp (có thể nhiều hơn) với mỗi lần chạy 15 phút thì thời gian huấn luyện mô hình RNN tốn nhiều hơn so với LR.
+
+Trong điều kiện thực tế, có thể chạy kết hợp cả hai mô hình. Nếu hai mô hình cho ra kết quả khác nhau với 1 bình luận thì bình luận đó sẽ đưa vào trạng thái đợi người kiểm duyệt. Nếu kết quả giống nhau thì có thẻ sử dụng trực tiếp kết quả đó.
+
+Có thể nghiên cứu thêm hướng phát triển về bước tiền xử lý dữ liệu. Các phương pháp tiền xử lý bình luận được đề cập ở trên vẫn chưa đầy đủ và còn phải đối mặt với các bài toán như teen code, sai chính tả tiếng Việt, từ viết tắt,...
 
 \end{document}
